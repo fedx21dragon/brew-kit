@@ -37,3 +37,14 @@ def test_upgrade_cask_shows_changelog():
         r = CliRunner().invoke(app, ["upgrade"])
     assert "A tool" in r.output and "acme/foo/releases" in r.output
     up.assert_called_once_with(None)
+
+
+def test_brew_failure_is_short_error(monkeypatch):
+    import subprocess, pytest
+    from brewkit import cli
+    def boom(*a): raise subprocess.CalledProcessError(1, ["brew", "info", "x"])
+    monkeypatch.setattr(brew, "_run", boom)
+    monkeypatch.setattr("sys.argv", ["brewkit", "info", "x"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 1

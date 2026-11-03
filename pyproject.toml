@@ -9,7 +9,7 @@ dependencies = ["typer>=0.12"]
 test = ["pytest"]
 
 [project.scripts]
-brewkit = "brewkit.cli:app"
+brewkit = "brewkit.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

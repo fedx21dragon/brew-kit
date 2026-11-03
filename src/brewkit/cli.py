@@ -1,8 +1,18 @@
+import subprocess
+
 import typer
 
 from . import brew
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
+
+
+def main():
+    try:
+        app()
+    except subprocess.CalledProcessError as e:
+        typer.echo(f"brew failed (exit {e.returncode}): {' '.join(e.cmd[:3])}", err=True)
+        raise SystemExit(1)
 
 
 @app.command()
