@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import termios
@@ -86,7 +87,7 @@ def upgrade(name: str = typer.Argument(None)):
 def install(name: str):
     """Preview a package, confirm, then install."""
     info(name)
-    if Confirm.ask(f"Install [bold]{name}[/]?", default=False):
+    if Confirm.ask(f"[bold cyan]➤[/] Install [bold]{name}[/]?", default=False):
         brew.install(name)
         out.print(f"🍺 [green]{name} installed.[/]")
 
@@ -99,11 +100,15 @@ BANNER = r"""
 |_.__/ |_|    \___|   \_/\_/   |_|\_\ |_| \__|
 """
 
+def ask(label: str, **kw) -> str:
+    return Prompt.ask(f"[bold cyan]➤[/] {label}", show_default=False, **kw)
+
+
 ITEMS = [
-    ("Search", "Find formulae and casks", lambda: search(Prompt.ask("Search term"))),
+    ("Search", "Find formulae and casks", lambda: search(ask("Search term"))),
     ("List", "Installed packages", lambda: list_()),
-    ("Info", "Description and homepage", lambda: info(Prompt.ask("Name"))),
-    ("Install", "Preview, confirm, install", lambda: install(Prompt.ask("Name"))),
+    ("Info", "Description and homepage", lambda: info(ask("Name"))),
+    ("Install", "Preview, confirm, install", lambda: install(ask("Name"))),
     ("Outdated", "What has a newer version", lambda: outdated()),
     ("Upgrade", "Update one package or all", lambda: _upgrade_flow()),
 ]
@@ -111,8 +116,8 @@ ITEMS = [
 
 def _upgrade_flow():
     outdated()
-    n = Prompt.ask("Package to upgrade [dim](empty = all)[/]", default="")
-    if Confirm.ask(f"Upgrade {n or 'everything'}?", default=False):
+    n = ask("Package to upgrade [dim](empty = all)[/]", default="")
+    if Confirm.ask(f"[bold cyan]➤[/] Upgrade {n or 'everything'}?", default=False):
         upgrade(n or None)
 
 
@@ -124,12 +129,18 @@ def _key() -> str:
     old = termios.tcgetattr(fd)
     try:
         tty.setcbreak(fd, termios.TCSANOW)
-        c = sys.stdin.read(1)
-        if c == "\x1b":
-            c += sys.stdin.read(2)
-        return {"\x1b[A": "up", "\x1b[B": "down", "\n": "enter", "\r": "enter"}.get(c, c)
+        c = os.read(fd, 1)  # raw fd read: no hidden Python-side buffer that swallows/replays keys
+        if c == b"\x1b":
+            c += os.read(fd, 2)
+        return {b"\x1b[A": "up", b"\x1b[B": "down", b"\n": "enter", b"\r": "enter"}.get(c, c.decode(errors="ignore"))
     finally:
         termios.tcsetattr(fd, termios.TCSANOW, old)
+
+
+def _flush():
+    """Drop stray keypresses (key repeat, \r\n) so they can't answer the next prompt."""
+    if sys.stdin.isatty():
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
 
 
 def _draw(sel: int, first: bool):
@@ -166,9 +177,11 @@ def menu():
             elif k == "enter":
                 break
         out.print()
+        _flush()
         try:
             ITEMS[sel][2]()
         except subprocess.CalledProcessError as e:
             out.print(f"[red]brew failed (exit {e.returncode})[/]")
-        Prompt.ask("\n[dim]Press Enter to go back[/]", default="")
+        _flush()
+        Prompt.ask("\n[dim]Press Enter to go back[/]", default="", show_default=False)
         out.clear()
