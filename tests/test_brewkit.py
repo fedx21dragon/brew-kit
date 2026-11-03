@@ -48,3 +48,14 @@ def test_brew_failure_is_short_error(monkeypatch):
     with pytest.raises(SystemExit) as e:
         cli.main()
     assert e.value.code == 1
+
+
+def test_install_declined_does_not_install():
+    with patch.object(brew, "_run", fake_run), patch.object(brew, "install") as ins:
+        CliRunner().invoke(app, ["install", "foo"], input="n\n")
+    ins.assert_not_called()
+
+
+def test_menu_quit():
+    r = CliRunner().invoke(app, [], input="quit\n")
+    assert "brewkit" in r.output and r.exit_code == 0

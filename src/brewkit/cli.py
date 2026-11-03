@@ -3,6 +3,7 @@ import subprocess
 import typer
 from rich.console import Console
 from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 from . import brew
@@ -13,7 +14,14 @@ out = Console()
 def table(*cols: str) -> Table:
     return Table(*cols, header_style="bold cyan", box=None, pad_edge=False)
 
-app = typer.Typer(no_args_is_help=True, add_completion=False)
+app = typer.Typer(add_completion=False)
+
+
+@app.callback(invoke_without_command=True)
+def home(ctx: typer.Context):
+    """Homebrew, but friendlier. Run without a command for the interactive menu."""
+    if ctx.invoked_subcommand is None:
+        menu()
 
 
 def main():
@@ -69,3 +77,33 @@ def upgrade(name: str = typer.Argument(None)):
             if link := brew.changelog_url(e):
                 out.print(f"  Changelog: [blue underline]{link}[/]")
     brew.upgrade(name)
+
+
+@app.command()
+def install(name: str):
+    """Preview a package, confirm, then install."""
+    info(name)
+    if Confirm.ask(f"Install [bold]{name}[/]?", default=False):
+        brew.install(name)
+        out.print(f"🍺 [green]{name} installed.[/]")
+
+
+def menu():
+    out.print(Panel.fit("🍺 [bold yellow]brewkit[/]  [dim]Homebrew, made friendly[/]", border_style="yellow"))
+    while True:
+        c = Prompt.ask("\n[bold]What now?[/]", choices=["search", "list", "info", "install", "outdated", "upgrade", "quit"], default="quit")
+        if c == "quit":
+            out.print("[dim]Cheers 🍻[/]")
+            return
+        if c == "list":
+            list_()
+        elif c == "outdated":
+            outdated()
+        elif c == "upgrade":
+            outdated()
+            n = Prompt.ask("Package to upgrade [dim](empty = all)[/]", default="")
+            if Confirm.ask(f"Upgrade {n or 'everything'}?", default=False):
+                upgrade(n or None)
+        else:
+            arg = Prompt.ask("Name" if c != "search" else "Search term")
+            {"search": search, "info": info, "install": install}[c](arg)

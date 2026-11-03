@@ -64,6 +64,10 @@ def upgrade(name: str | None) -> None:
     subprocess.run(["brew", "upgrade", *([name] if name else [])], check=True)
 
 
+def install(name: str) -> None:
+    subprocess.run(["brew", "install", name], check=True)
+
+
 def changelog_url(cask: dict) -> str | None:
     """Only if the cask points at a GitHub repo; None otherwise."""
     for u in (cask.get("url"), cask.get("homepage")):
