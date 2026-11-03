@@ -1,4 +1,7 @@
 import subprocess
+import sys
+import termios
+import tty
 
 import typer
 from rich.console import Console
@@ -88,22 +91,84 @@ def install(name: str):
         out.print(f"🍺 [green]{name} installed.[/]")
 
 
+BANNER = r"""
+ _                              _      _  _
+| |__   _ __   ___  __      __ | | __ (_)| |_
+| '_ \ | '__| / _ \ \ \ /\ / / | |/ / | || __|
+| |_) || |   |  __/  \ V  V /  |   <  | || |_
+|_.__/ |_|    \___|   \_/\_/   |_|\_\ |_| \__|
+"""
+
+ITEMS = [
+    ("Search", "Find formulae and casks", lambda: search(Prompt.ask("Search term"))),
+    ("List", "Installed packages", lambda: list_()),
+    ("Info", "Description and homepage", lambda: info(Prompt.ask("Name"))),
+    ("Install", "Preview, confirm, install", lambda: install(Prompt.ask("Name"))),
+    ("Outdated", "What has a newer version", lambda: outdated()),
+    ("Upgrade", "Update one package or all", lambda: _upgrade_flow()),
+]
+
+
+def _upgrade_flow():
+    outdated()
+    n = Prompt.ask("Package to upgrade [dim](empty = all)[/]", default="")
+    if Confirm.ask(f"Upgrade {n or 'everything'}?", default=False):
+        upgrade(n or None)
+
+
+def _key() -> str:
+    """One keypress: 'up', 'down', 'enter', or the character."""
+    if not sys.stdin.isatty():  # piped input (tests)
+        return sys.stdin.read(1) or "q"
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd, termios.TCSANOW)
+        c = sys.stdin.read(1)
+        if c == "\x1b":
+            c += sys.stdin.read(2)
+        return {"\x1b[A": "up", "\x1b[B": "down", "\n": "enter", "\r": "enter"}.get(c, c)
+    finally:
+        termios.tcsetattr(fd, termios.TCSANOW, old)
+
+
+def _draw(sel: int, first: bool):
+    if not first:
+        out.file.write(f"\x1b[{len(ITEMS) + 3}A")  # jump back over the previous menu
+    for i, (name, desc, _) in enumerate(ITEMS):
+        arrow, style = ("➤", "bold cyan") if i == sel else (" ", "white")
+        out.print(f"[{style}]{arrow} {i + 1}. {name:<10} {desc}[/]", end="\x1b[K\n")
+    out.print("", end="\x1b[K\n")
+    out.print("[dim]↑↓ | Enter | 1-6 Jump | Q Quit[/]", end="\x1b[K\n")
+    out.print("", end="\x1b[K\n")
+
+
 def menu():
-    out.print(Panel.fit("🍺 [bold yellow]brewkit[/]  [dim]Homebrew, made friendly[/]", border_style="yellow"))
+    sel = 0
     while True:
-        c = Prompt.ask("\n[bold]What now?[/]", choices=["search", "list", "info", "install", "outdated", "upgrade", "quit"], default="quit")
-        if c == "quit":
-            out.print("[dim]Cheers 🍻[/]")
-            return
-        if c == "list":
-            list_()
-        elif c == "outdated":
-            outdated()
-        elif c == "upgrade":
-            outdated()
-            n = Prompt.ask("Package to upgrade [dim](empty = all)[/]", default="")
-            if Confirm.ask(f"Upgrade {n or 'everything'}?", default=False):
-                upgrade(n or None)
-        else:
-            arg = Prompt.ask("Name" if c != "search" else "Search term")
-            {"search": search, "info": info, "install": install}[c](arg)
+        out.print(BANNER, style="green", highlight=False, markup=False)
+        out.print("[bold blue]Homebrew, made friendly.[/]  [green]Search, install, upgrade.[/]\n")
+        first = True
+        while True:
+            _draw(sel, first)
+            first = False
+            k = _key()
+            if k in ("q", "Q", "\x03"):
+                out.print("[dim]Cheers 🍻[/]")
+                return
+            if k == "up":
+                sel = (sel - 1) % len(ITEMS)
+            elif k == "down":
+                sel = (sel + 1) % len(ITEMS)
+            elif k.isdigit() and 1 <= int(k) <= len(ITEMS):
+                sel = int(k) - 1
+                break
+            elif k == "enter":
+                break
+        out.print()
+        try:
+            ITEMS[sel][2]()
+        except subprocess.CalledProcessError as e:
+            out.print(f"[red]brew failed (exit {e.returncode})[/]")
+        Prompt.ask("\n[dim]Press Enter to go back[/]", default="")
+        out.clear()

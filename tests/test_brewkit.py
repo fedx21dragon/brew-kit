@@ -57,5 +57,5 @@ def test_install_declined_does_not_install():
 
 
 def test_menu_quit():
-    r = CliRunner().invoke(app, [], input="quit\n")
-    assert "brewkit" in r.output and r.exit_code == 0
+    r = CliRunner().invoke(app, [], input="q")
+    assert "Homebrew, made friendly" in r.output and r.exit_code == 0
