@@ -1,0 +1,22 @@
+[project]
+name = "brewkit"
+version = "0.1.0"
+description = "Small CLI around Homebrew's JSON API"
+requires-python = ">=3.12"
+dependencies = ["typer>=0.12"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+brewkit = "brewkit.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
