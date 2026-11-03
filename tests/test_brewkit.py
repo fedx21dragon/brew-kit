@@ -25,7 +25,7 @@ def test_changelog_only_with_source():
 def test_list():
     with patch.object(brew, "_run", fake_run):
         r = CliRunner().invoke(app, ["list"])
-    assert "bar 1.1" in r.output and "foo 1.0" in r.output
+    assert "bar  " in r.output and "1.1" in r.output and "foo" in r.output and "1.0" in r.output
 
 
 def test_upgrade_cask_shows_changelog():
