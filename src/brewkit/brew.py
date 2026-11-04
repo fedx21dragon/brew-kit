@@ -14,6 +14,9 @@ def _json(*args: str) -> dict:
     return json.loads(_run(*args, "--json=v2"))
 
 
+SEARCH_LIMIT = 30
+
+
 def search(term: str) -> list[dict]:
     # `brew search` has no JSON mode and only prints names; take the names,
     # then get the real data from `brew info --json=v2`.
@@ -23,7 +26,7 @@ def search(term: str) -> list[dict]:
             ["brew", "search", kind, term], capture_output=True, text=True
         ).stdout
         names += [n for n in out.split() if "==>" not in n]
-    return info(names) if names else []
+    return info(names[:SEARCH_LIMIT]) if names else []
 
 
 def info(names: list[str]) -> list[dict]:
@@ -52,12 +55,16 @@ def installed() -> list[dict]:
     return [_formula(f) for f in data["formulae"]] + [_cask(c) for c in data["casks"]]
 
 
+def _joined(v) -> str:
+    # casks report installed_versions as a string, formulae as a list
+    return v if isinstance(v, str) else ", ".join(v)
+
+
 def outdated() -> list[dict]:
     d = _json("outdated")
-    return [dict(name=f["name"], kind="formula", current=f["current_version"],
-                 installed=", ".join(f["installed_versions"])) for f in d["formulae"]] + \
-           [dict(name=c["name"], kind="cask", current=c["current_version"],
-                 installed=", ".join(c["installed_versions"])) for c in d["casks"]]
+    return [dict(name=x["name"], kind=kind, current=x["current_version"],
+                 installed=_joined(x["installed_versions"]))
+            for kind, key in (("formula", "formulae"), ("cask", "casks")) for x in d[key]]
 
 
 def upgrade(name: str | None) -> None:

@@ -59,3 +59,34 @@ def test_install_declined_does_not_install():
 def test_menu_quit():
     r = CliRunner().invoke(app, [], input="q")
     assert "Homebrew, made friendly" in r.output and r.exit_code == 0
+
+
+def test_outdated_handles_string_and_list_versions():
+    d = {"formulae": [{"name": "a", "current_version": "2", "installed_versions": ["1", "0.9"]}],
+         "casks": [{"name": "b", "current_version": "2", "installed_versions": "1"}]}
+    with patch.object(brew, "_run", lambda *a: json.dumps(d)):
+        r = brew.outdated()
+    assert [o["installed"] for o in r] == ["1, 0.9", "1"]
+
+
+def test_search_is_capped():
+    names = " ".join(f"p{i}" for i in range(100))
+    seen = {}
+    def fake_info(n):
+        seen["n"] = n
+        return []
+    with patch("subprocess.run") as run, patch.object(brew, "info", fake_info):
+        run.return_value.stdout = names
+        brew.search("p")
+    assert len(seen["n"]) == brew.SEARCH_LIMIT
+
+
+def test_version_flag():
+    r = CliRunner().invoke(app, ["--version"])
+    assert r.exit_code == 0 and r.output.strip()[0].isdigit()
+
+
+def test_info_output():
+    with patch.object(brew, "_run", fake_run):
+        r = CliRunner().invoke(app, ["info", "bar"])
+    assert "bar" in r.output and "bar.org" in r.output

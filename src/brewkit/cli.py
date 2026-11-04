@@ -1,4 +1,5 @@
 import os
+from importlib import metadata
 import subprocess
 import sys
 import termios
@@ -18,11 +19,18 @@ out = Console()
 def table(*cols: str) -> Table:
     return Table(*cols, header_style="bold cyan", box=None, pad_edge=False)
 
+
 app = typer.Typer(add_completion=False)
 
 
+def _version(show: bool):
+    if show:
+        typer.echo(metadata.version("brewkit"))
+        raise typer.Exit()
+
+
 @app.callback(invoke_without_command=True)
-def home(ctx: typer.Context):
+def home(ctx: typer.Context, version: bool = typer.Option(False, "--version", callback=_version, is_eager=True)):
     """Homebrew, but friendlier. Run without a command for the interactive menu."""
     if ctx.invoked_subcommand is None:
         menu()
@@ -31,6 +39,8 @@ def home(ctx: typer.Context):
 def main():
     try:
         app()
+    except (KeyboardInterrupt, EOFError):
+        raise SystemExit(130)
     except subprocess.CalledProcessError as e:
         typer.echo(f"brew failed (exit {e.returncode}): {' '.join(e.cmd[:3])}", err=True)
         raise SystemExit(1)
@@ -100,8 +110,13 @@ BANNER = r"""
 |_.__/ |_|    \___|   \_/\_/   |_|\_\ |_| \__|
 """
 
+
 def ask(label: str, **kw) -> str:
-    return Prompt.ask(f"[bold cyan]➤[/] {label}", show_default=False, **kw)
+    """Prompt; re-asks on empty input unless a default is given."""
+    while True:
+        v = Prompt.ask(f"[bold cyan]➤[/] {label}", show_default=False, **kw).strip()
+        if v or "default" in kw:
+            return v
 
 
 ITEMS = [
