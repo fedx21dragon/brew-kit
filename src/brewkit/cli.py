@@ -1,9 +1,9 @@
 import os
-from importlib import metadata
 import subprocess
 import sys
 import termios
 import tty
+from importlib import metadata
 
 import typer
 from rich.console import Console
@@ -15,9 +15,25 @@ from . import brew
 
 out = Console()
 
+# One palette for menu and commands (Catppuccin-ish, matches the Mole look).
+ACCENT = "#7fdbca"  # turquoise: selection, headers, prompts
+GREEN = "#a6e3a1"   # banner, versions, success
+BLUE = "#89b4fa"    # links
+CASK = "#cba6f7"    # casks
+ERR = "#f38ba8"     # errors, outdated versions
+DIM = "grey50"
+
 
 def table(*cols: str) -> Table:
-    return Table(*cols, header_style="bold cyan", box=None, pad_edge=False)
+    return Table(*cols, header_style=f"bold {ACCENT}", box=None, pad_edge=False, padding=(0, 3, 0, 0))
+
+
+def busy():
+    return out.status(f"[{DIM}]Asking brew…[/]", spinner="dots", spinner_style=ACCENT)
+
+
+def kind(k: str) -> str:
+    return f"[{CASK}]cask[/]" if k == "cask" else f"[{DIM}]formula[/]"
 
 
 app = typer.Typer(add_completion=False)
@@ -42,7 +58,7 @@ def main():
     except (KeyboardInterrupt, EOFError):
         raise SystemExit(130)
     except subprocess.CalledProcessError as e:
-        typer.echo(f"brew failed (exit {e.returncode}): {' '.join(e.cmd[:3])}", err=True)
+        Console(stderr=True).print(f"[{ERR}]✗ brew failed (exit {e.returncode}): {' '.join(e.cmd[:3])}[/]")
         raise SystemExit(1)
 
 
@@ -50,46 +66,56 @@ def main():
 def search(term: str):
     """Search formulae and casks."""
     t = table("Name", "Type", "Description")
-    for e in brew.search(term):
-        t.add_row(f"[bold]{e['name']}[/]", "[magenta]cask[/]" if e["kind"] == "cask" else "formula", e["desc"] or "")
-    out.print(t)
+    with busy():
+        found = brew.search(term)
+    for e in found:
+        t.add_row(f"[bold]{e['name']}[/]", kind(e["kind"]), e["desc"] or "")
+    out.print(t if t.row_count else f"[{DIM}]Nothing found for '{term}'.[/]")
 
 
 @app.command("list")
 def list_():
     """Installed packages with version."""
     t = table("Name", "Version")
-    for e in brew.installed():
-        t.add_row(f"[bold]{e['name']}[/]", f"[green]{e['installed']}[/]")
+    with busy():
+        pkgs = brew.installed()
+    for e in pkgs:
+        t.add_row(f"[bold]{e['name']}[/]", f"[{GREEN}]{e['installed']}[/]")
     out.print(t)
 
 
 @app.command()
 def info(name: str):
     """Description and homepage."""
-    e = brew.info([name])[0]
-    body = f"{e['desc'] or ''}\n[blue underline]{e['homepage'] or ''}[/]"
-    out.print(Panel(body, title=f"[bold]{e['name']}[/] {e['version']} ({e['kind']})", expand=False))
+    with busy():
+        e = brew.info([name])[0]
+    body = f"{e['desc'] or ''}\n[{BLUE} underline]{e['homepage'] or ''}[/]"
+    title = f"[bold]{e['name']}[/] [{GREEN}]{e['version']}[/] {kind(e['kind'])}"
+    out.print(Panel(body, title=title, title_align="left", border_style=ACCENT, expand=False))
 
 
 @app.command()
 def outdated():
     """Outdated packages."""
     t = table("Name", "Installed", "Latest")
-    for o in brew.outdated():
-        t.add_row(f"[bold]{o['name']}[/]", f"[red]{o['installed']}[/]", f"[green]{o['current']}[/]")
-    out.print(t if t.row_count else "[green]Everything is up to date.[/]")
+    with busy():
+        old = brew.outdated()
+    for o in old:
+        t.add_row(f"[bold]{o['name']}[/]", f"[{ERR}]{o['installed']}[/]", f"[{GREEN}]{o['current']}[/]")
+    out.print(t if t.row_count else f"[{GREEN}]✔ Everything is up to date.[/]")
 
 
 @app.command()
 def upgrade(name: str = typer.Argument(None)):
     """Upgrade one or all; casks show description and changelog link first."""
-    targets = [name] if name else [o["name"] for o in brew.outdated() if o["kind"] == "cask"]
-    for e in brew.info(targets) if targets else []:
+    with busy():
+        targets = [name] if name else [o["name"] for o in brew.outdated() if o["kind"] == "cask"]
+        previews = brew.info(targets) if targets else []
+    for e in previews:
         if e["kind"] == "cask":
-            out.print(f"[bold]{e['name']}[/]: {e['desc'] or ''}")
+            out.print(f"[bold]{e['name']}[/] {kind('cask')}  {e['desc'] or ''}")
             if link := brew.changelog_url(e):
-                out.print(f"  Changelog: [blue underline]{link}[/]")
+                out.print(f"  Changelog [{BLUE} underline]{link}[/]")
     brew.upgrade(name)
 
 
@@ -97,9 +123,9 @@ def upgrade(name: str = typer.Argument(None)):
 def install(name: str):
     """Preview a package, confirm, then install."""
     info(name)
-    if Confirm.ask(f"[bold cyan]➤[/] Install [bold]{name}[/]?", default=False):
+    if Confirm.ask(f"[bold {ACCENT}]➤[/] Install [bold]{name}[/]?", default=False):
         brew.install(name)
-        out.print(f"🍺 [green]{name} installed.[/]")
+        out.print(f"[{GREEN}]✔ {name} installed.[/]")
 
 
 BANNER = r"""
@@ -108,13 +134,22 @@ BANNER = r"""
 | '_ \ | '__| / _ \ \ \ /\ / / | |/ / | || __|
 | |_) || |   |  __/  \ V  V /  |   <  | || |_
 |_.__/ |_|    \___|   \_/\_/   |_|\_\ |_| \__|
-"""
+""".strip("\n").split("\n")
+# Tagline rows sit next to the bottom of the banner, like in Mole.
+SIDE = {3: f"[{BLUE} underline]https://github.com/fedx21dragon/brew-kit[/]", 4: f"[{GREEN}]Homebrew, made friendly.[/]"}
+
+
+def banner():
+    w = max(len(line) for line in BANNER)
+    for i, line in enumerate(BANNER):
+        out.print(f"[{GREEN}]{line.ljust(w)}[/]  {SIDE.get(i, '')}", highlight=False)
+    out.print()
 
 
 def ask(label: str, **kw) -> str:
     """Prompt; re-asks on empty input unless a default is given."""
     while True:
-        v = Prompt.ask(f"[bold cyan]➤[/] {label}", show_default=False, **kw).strip()
+        v = Prompt.ask(f"[bold {ACCENT}]➤[/] {label}", show_default=False, **kw).strip()
         if v or "default" in kw:
             return v
 
@@ -131,8 +166,8 @@ ITEMS = [
 
 def _upgrade_flow():
     outdated()
-    n = ask("Package to upgrade [dim](empty = all)[/]", default="")
-    if Confirm.ask(f"[bold cyan]➤[/] Upgrade {n or 'everything'}?", default=False):
+    n = ask(f"Package to upgrade [{DIM}](empty = all)[/]", default="")
+    if Confirm.ask(f"[bold {ACCENT}]➤[/] Upgrade {n or 'everything'}?", default=False):
         upgrade(n or None)
 
 
@@ -158,45 +193,55 @@ def _flush():
         termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
 
 
+def _cursor(show: bool):
+    if out.is_terminal:
+        out.file.write("\x1b[?25h" if show else "\x1b[?25l")
+
+
+MENU_LINES = len(ITEMS) + 2  # items + blank + footer
+
+
 def _draw(sel: int, first: bool):
     if not first:
-        out.file.write(f"\x1b[{len(ITEMS) + 3}A")  # jump back over the previous menu
+        out.file.write(f"\x1b[{MENU_LINES}A")  # jump back over the previous menu
     for i, (name, desc, _) in enumerate(ITEMS):
-        arrow, style = ("➤", "bold cyan") if i == sel else (" ", "white")
-        out.print(f"[{style}]{arrow} {i + 1}. {name:<10} {desc}[/]", end="\x1b[K\n")
+        row = f"{i + 1}. {name:<10}  {desc}"
+        out.print(f"[bold {ACCENT}]➤ {row}[/]" if i == sel else f"  {row}", end="\x1b[K\n")
     out.print("", end="\x1b[K\n")
-    out.print("[dim]↑↓ | Enter | 1-6 Jump | Q Quit[/]", end="\x1b[K\n")
-    out.print("", end="\x1b[K\n")
+    out.print(f"[{DIM}]↑↓  |  Enter  |  1-{len(ITEMS)} Jump  |  Q Quit[/]", end="\x1b[K\n")
 
 
 def menu():
     sel = 0
     while True:
-        out.print(BANNER, style="green", highlight=False, markup=False)
-        out.print("[bold blue]Homebrew, made friendly.[/]  [green]Search, install, upgrade.[/]\n")
+        banner()
         first = True
-        while True:
-            _draw(sel, first)
-            first = False
-            k = _key()
-            if k in ("q", "Q", "\x03"):
-                out.print("[dim]Cheers 🍻[/]")
-                return
-            if k == "up":
-                sel = (sel - 1) % len(ITEMS)
-            elif k == "down":
-                sel = (sel + 1) % len(ITEMS)
-            elif k.isdigit() and 1 <= int(k) <= len(ITEMS):
-                sel = int(k) - 1
-                break
-            elif k == "enter":
-                break
+        _cursor(False)
+        try:
+            while True:
+                _draw(sel, first)
+                first = False
+                k = _key()
+                if k in ("q", "Q", "\x03"):
+                    out.print(f"[{DIM}]Cheers 🍻[/]")
+                    return
+                if k == "up":
+                    sel = (sel - 1) % len(ITEMS)
+                elif k == "down":
+                    sel = (sel + 1) % len(ITEMS)
+                elif k.isdigit() and 1 <= int(k) <= len(ITEMS):
+                    sel = int(k) - 1
+                    break
+                elif k == "enter":
+                    break
+        finally:
+            _cursor(True)
         out.print()
         _flush()
         try:
             ITEMS[sel][2]()
         except subprocess.CalledProcessError as e:
-            out.print(f"[red]brew failed (exit {e.returncode})[/]")
+            out.print(f"[{ERR}]✗ brew failed (exit {e.returncode})[/]")
         _flush()
-        Prompt.ask("\n[dim]Press Enter to go back[/]", default="", show_default=False)
+        Prompt.ask(f"\n[{DIM}]Press Enter to go back[/]", default="", show_default=False)
         out.clear()
