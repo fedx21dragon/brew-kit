@@ -153,21 +153,26 @@ def install(name: str):
         out.print(f"[{GREEN}]✔ {esc(name)} installed.[/]")
 
 
-BANNER = r"""
- _                              _      _  _
-| |__   _ __   ___  __      __ | | __ (_)| |_
-| '_ \ | '__| / _ \ \ \ /\ / / | |/ / | || __|
-| |_) || |   |  __/  \ V  V /  |   <  | || |_
-|_.__/ |_|    \___|   \_/\_/   |_|\_\ |_| \__|
+BANNER = """
+██████╗ ██████╗ ███████╗██╗    ██╗██╗  ██╗██╗████████╗
+██╔══██╗██╔══██╗██╔════╝██║    ██║██║ ██╔╝██║╚══██╔══╝
+██████╔╝██████╔╝█████╗  ██║ █╗ ██║█████╔╝ ██║   ██║
+██╔══██╗██╔══██╗██╔══╝  ██║███╗██║██╔═██╗ ██║   ██║
+██████╔╝██║  ██║███████╗╚███╔███╔╝██║  ██╗██║   ██║
+╚═════╝ ╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚═╝  ╚═╝╚═╝   ╚═╝
 """.strip("\n").split("\n")
-# Tagline rows sit next to the bottom of the banner, like in Mole.
-SIDE = {3: f"[{BLUE} underline]https://github.com/fedx21dragon/brew-kit[/]", 4: f"[{GREEN}]Homebrew, made friendly.[/]"}
+URL = "https://github.com/fedx21dragon/brew-kit"
+TAGLINE = "Homebrew, made friendly."
 
 
 def banner():
     w = max(len(line) for line in BANNER)
+    side = out.width >= w + 2 + len(URL)  # tagline beside the logo (like Mole), else below it
+    rows = {len(BANNER) - 2: f"[{BLUE} underline]{URL}[/]", len(BANNER) - 1: f"[{GREEN}]{TAGLINE}[/]"} if side else {}
     for i, line in enumerate(BANNER):
-        out.print(f"[{GREEN}]{line.ljust(w)}[/]  {SIDE.get(i, '')}", highlight=False)
+        out.print(f"[{GREEN}]{line.ljust(w)}[/]  {rows.get(i, '')}", highlight=False)
+    if not side:
+        out.print(f"[{BLUE} underline]{URL}[/]\n[{GREEN}]{TAGLINE}[/]", highlight=False)
     out.print()
 
 
