@@ -49,3 +49,7 @@ details are then fetched via `brew info --json=v2`.
 2. Update `url` and `sha256` in `homebrew-tap/Formula/brewkit.rb`
    (`curl -sL <tarball-url> | shasum -a 256`), then commit in the tap repo.
 3. Verify: `brew install --build-from-source fedx21dragon/tap/brewkit && brew test brewkit`.
+
+## License
+
+MIT

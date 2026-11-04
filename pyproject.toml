@@ -3,6 +3,7 @@ name = "brewkit"
 version = "0.1.0"
 description = "Small CLI around Homebrew's JSON API"
 requires-python = ">=3.12"
+license = "MIT"
 dependencies = ["typer>=0.12", "rich"]
 
 [project.optional-dependencies]
