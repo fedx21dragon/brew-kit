@@ -2,6 +2,7 @@
 import json
 import re
 import subprocess
+from itertools import zip_longest
 
 
 def _run(*args: str) -> str:
@@ -17,16 +18,21 @@ def _json(*args: str) -> dict:
 SEARCH_LIMIT = 30
 
 
+def _search_names(kind: str, term: str) -> list[str]:
+    r = subprocess.run(["brew", "search", kind, term], capture_output=True, text=True)
+    # exit 1 + "No ... found" is plain "no results"; anything else is a real failure
+    if r.returncode and "No " not in r.stderr:
+        raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout, r.stderr)
+    return [ln.strip() for ln in r.stdout.splitlines() if ln.strip() and not ln.startswith("==>")]
+
+
 def search(term: str) -> list[dict]:
     # `brew search` has no JSON mode and only prints names; take the names,
     # then get the real data from `brew info --json=v2`.
-    names = []
-    for kind in ("--formulae", "--casks"):
-        out = subprocess.run(
-            ["brew", "search", kind, term], capture_output=True, text=True
-        ).stdout
-        names += [n for n in out.split() if "==>" not in n]
-    return info(names[:SEARCH_LIMIT]) if names else []
+    # Interleave formulae and casks so the cap can't cut one kind off entirely.
+    lists = [_search_names("--formulae", term), _search_names("--casks", term)]
+    names = [n for pair in zip_longest(*lists) for n in pair if n][:SEARCH_LIMIT]
+    return info(names) if names else []
 
 
 def info(names: list[str]) -> list[dict]:
@@ -71,14 +77,15 @@ def upgrade(name: str | None) -> None:
     subprocess.run(["brew", "upgrade", *([name] if name else [])], check=True)
 
 
-def install(name: str) -> None:
-    subprocess.run(["brew", "install", name], check=True)
+def install(name: str, kind: str | None = None) -> None:
+    flag = {"formula": ["--formula"], "cask": ["--cask"]}.get(kind, [])
+    subprocess.run(["brew", "install", *flag, name], check=True)
 
 
 def changelog_url(cask: dict) -> str | None:
     """Only if the cask points at a GitHub repo; None otherwise."""
     for u in (cask.get("url"), cask.get("homepage")):
-        m = re.match(r"https://github\.com/([^/]+/[^/]+)", u or "")
+        m = re.match(r"https://github\.com/([^/]+)/([^/#?]+)", u or "")
         if m:
-            return f"https://github.com/{m[1]}/releases"
+            return f"https://github.com/{m[1]}/{m[2].removesuffix('.git')}/releases"
     return None

@@ -1,4 +1,5 @@
 import os
+import select
 import subprocess
 import sys
 import termios
@@ -7,6 +8,7 @@ from importlib import metadata
 
 import typer
 from rich.console import Console
+from rich.markup import escape as esc
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from rich.table import Table
@@ -52,13 +54,19 @@ def home(ctx: typer.Context, version: bool = typer.Option(False, "--version", ca
         menu()
 
 
+def _brew_error(e: Exception) -> str:
+    if isinstance(e, FileNotFoundError):
+        return "brew not found. Install Homebrew first: https://brew.sh"
+    return f"brew failed (exit {e.returncode}): {' '.join(e.cmd[:3])}"
+
+
 def main():
     try:
         app()
     except (KeyboardInterrupt, EOFError):
         raise SystemExit(130)
-    except subprocess.CalledProcessError as e:
-        Console(stderr=True).print(f"[{ERR}]✗ brew failed (exit {e.returncode}): {' '.join(e.cmd[:3])}[/]")
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        Console(stderr=True).print(f"[{ERR}]✗ {esc(_brew_error(e))}[/]")
         raise SystemExit(1)
 
 
@@ -69,8 +77,8 @@ def search(term: str):
     with busy():
         found = brew.search(term)
     for e in found:
-        t.add_row(f"[bold]{e['name']}[/]", kind(e["kind"]), e["desc"] or "")
-    out.print(t if t.row_count else f"[{DIM}]Nothing found for '{term}'.[/]")
+        t.add_row(f"[bold]{esc(e['name'])}[/]", kind(e["kind"]), esc(e["desc"] or ""))
+    out.print(t if t.row_count else f"[{DIM}]Nothing found for '{esc(term)}'.[/]")
 
 
 @app.command("list")
@@ -80,18 +88,27 @@ def list_():
     with busy():
         pkgs = brew.installed()
     for e in pkgs:
-        t.add_row(f"[bold]{e['name']}[/]", f"[{GREEN}]{e['installed']}[/]")
+        t.add_row(f"[bold]{esc(e['name'])}[/]", f"[{GREEN}]{esc(str(e['installed']))}[/]")
     out.print(t)
+
+
+def _show(name: str) -> list[dict]:
+    """Print an info panel per match (a name can be both a formula and a cask)."""
+    with busy():
+        entries = brew.info([name])
+    for e in entries:
+        body = f"{esc(e['desc'] or '')}\n[{BLUE} underline]{esc(e['homepage'] or '')}[/]"
+        title = f"[bold]{esc(e['name'])}[/] [{GREEN}]{esc(str(e['version']))}[/] {kind(e['kind'])}"
+        out.print(Panel(body, title=title, title_align="left", border_style=ACCENT, expand=False))
+    if not entries:
+        out.print(f"[{DIM}]Nothing found for '{esc(name)}'.[/]")
+    return entries
 
 
 @app.command()
 def info(name: str):
     """Description and homepage."""
-    with busy():
-        e = brew.info([name])[0]
-    body = f"{e['desc'] or ''}\n[{BLUE} underline]{e['homepage'] or ''}[/]"
-    title = f"[bold]{e['name']}[/] [{GREEN}]{e['version']}[/] {kind(e['kind'])}"
-    out.print(Panel(body, title=title, title_align="left", border_style=ACCENT, expand=False))
+    _show(name)
 
 
 @app.command()
@@ -101,31 +118,39 @@ def outdated():
     with busy():
         old = brew.outdated()
     for o in old:
-        t.add_row(f"[bold]{o['name']}[/]", f"[{ERR}]{o['installed']}[/]", f"[{GREEN}]{o['current']}[/]")
+        t.add_row(f"[bold]{esc(o['name'])}[/]", f"[{ERR}]{esc(o['installed'])}[/]", f"[{GREEN}]{esc(o['current'])}[/]")
     out.print(t if t.row_count else f"[{GREEN}]✔ Everything is up to date.[/]")
 
 
 @app.command()
 def upgrade(name: str = typer.Argument(None)):
     """Upgrade one or all; casks show description and changelog link first."""
-    with busy():
-        targets = [name] if name else [o["name"] for o in brew.outdated() if o["kind"] == "cask"]
-        previews = brew.info(targets) if targets else []
+    try:  # the preview is a nicety: if it fails, still upgrade
+        with busy():
+            targets = [name] if name else [o["name"] for o in brew.outdated() if o["kind"] == "cask"]
+            previews = brew.info(targets) if targets else []
+    except subprocess.CalledProcessError:
+        previews = []
     for e in previews:
         if e["kind"] == "cask":
-            out.print(f"[bold]{e['name']}[/] {kind('cask')}  {e['desc'] or ''}")
+            out.print(f"[bold]{esc(e['name'])}[/] {kind('cask')}  {esc(e['desc'] or '')}")
             if link := brew.changelog_url(e):
-                out.print(f"  Changelog [{BLUE} underline]{link}[/]")
+                out.print(f"  Changelog [{BLUE} underline]{esc(link)}[/]")
     brew.upgrade(name)
 
 
 @app.command()
 def install(name: str):
     """Preview a package, confirm, then install."""
-    info(name)
-    if Confirm.ask(f"[bold {ACCENT}]➤[/] Install [bold]{name}[/]?", default=False):
-        brew.install(name)
-        out.print(f"[{GREEN}]✔ {name} installed.[/]")
+    entries = _show(name)
+    if not entries:
+        return
+    chosen = None
+    if len({e["kind"] for e in entries}) > 1:  # same name as formula and cask
+        chosen = ask("Install as", choices=["formula", "cask"], default="formula")
+    if Confirm.ask(f"[bold {ACCENT}]➤[/] Install [bold]{esc(name)}[/]?", default=False):
+        brew.install(name, chosen)
+        out.print(f"[{GREEN}]✔ {esc(name)} installed.[/]")
 
 
 BANNER = r"""
@@ -180,7 +205,7 @@ def _key() -> str:
     try:
         tty.setcbreak(fd, termios.TCSANOW)
         c = os.read(fd, 1)  # raw fd read: no hidden Python-side buffer that swallows/replays keys
-        if c == b"\x1b":
+        if c == b"\x1b" and select.select([fd], [], [], 0.05)[0]:  # bare Esc has no follow-up bytes
             c += os.read(fd, 2)
         return {b"\x1b[A": "up", b"\x1b[B": "down", b"\n": "enter", b"\r": "enter"}.get(c, c.decode(errors="ignore"))
     finally:
@@ -212,6 +237,13 @@ def _draw(sel: int, first: bool):
 
 
 def menu():
+    try:
+        _menu()
+    except KeyboardInterrupt:
+        out.print(f"\n[{DIM}]Cheers 🍻[/]")
+
+
+def _menu():
     sel = 0
     while True:
         banner()
@@ -222,7 +254,7 @@ def menu():
                 _draw(sel, first)
                 first = False
                 k = _key()
-                if k in ("q", "Q", "\x03"):
+                if k in ("q", "Q"):
                     out.print(f"[{DIM}]Cheers 🍻[/]")
                     return
                 if k == "up":
@@ -240,8 +272,8 @@ def menu():
         _flush()
         try:
             ITEMS[sel][2]()
-        except subprocess.CalledProcessError as e:
-            out.print(f"[{ERR}]✗ brew failed (exit {e.returncode})[/]")
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            out.print(f"[{ERR}]✗ {esc(_brew_error(e))}[/]")
         _flush()
         Prompt.ask(f"\n[{DIM}]Press Enter to go back[/]", default="", show_default=False)
         out.clear()
